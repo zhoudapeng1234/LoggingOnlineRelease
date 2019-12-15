@@ -1,0 +1,385 @@
+<!DOCTYPE HTML>
+<html>
+
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>LoggingOnline</title>
+	<script src="../Assets/ExternalTools/HighCharts/code/highcharts.js"></script>
+	<script src="../Assets/ExternalTools/HighCharts/code/modules/exporting.js"></script>
+	<script src="../Assets/ExternalTools/HighCharts/code/modules/export-data.js"></script>
+	<script src="../Assets/ExternalTools/jQuery/jquery-3.4.1.min.js"></script>
+	<script src="../Assets/ExternalTools/jQuery/jquery-ui-1.12.1/jquery-ui.min.js"></script>
+	<link type="text/css" href="../Assets/ExternalTools/jQuery/jquery-ui-1.12.1/jquery-ui.min.css" rel="stylesheet">
+</head>
+
+<body>
+	<input type="file" id="files" style="display: none" onchange="GetFileName();" />
+	<input type="button" id="import" value="导入测井数据" style="position: absolute;"/>
+	<input type="button" id="dataPreprocess" value="数据预处理" style="margin-left: 120px; position: absolute;"/>
+	<input type="button" id="editPlotParameters" value="设置绘图参数" style="margin-left: 230px; position: absolute;"/>
+	<input type="button" id="editLithology" value="岩性划分" style="margin-left: 350px; position: absolute;"/>
+	<input type="button" id="dataManageInServer" value="个人数据库管理" style="margin-left: 500px; position: absolute;"/>
+	<input type="button" id="coopDataManageInServer" value="协作数据库管理" style="margin-left: 650px; position: absolute;"/>
+	<input type="button" id="addCooperator" value="管理协作者" style="margin-left: 800px; position: absolute;"/>
+	<div id = "dataBaseName" style="margin-left: 900px;position: absolute">数据库名称:</div>
+	<div id = "wellName" style="margin-left: 1050px;position: absolute">井名:</div>
+	<script src="../Assets/Scripts/EditPlotParameters.js"></script>
+	<script src="../Assets/Scripts/EditLithology.js"></script>
+	<script src="../Assets/Scripts/LoggingDataManage.js"></script>
+	<script src="../Assets/Scripts/CoopDataManage.js"></script>
+	<script src="../Assets/Scripts/ManageCooperator.js"></script>
+	<script src="../Assets/Scripts/DataPreprocess.js"></script>
+	
+
+	
+	<script type="text/javascript">
+		$("#import").click(function () {//点击导入按钮，使files触发点击事件，然后完成读取文件的操作。
+			$("#files").click();
+		});
+		$("#dataPreprocess").click(function () {//点击数据预处理，进入预处理方法选择对话框。
+			$( "#dialog-dataPreprocess" ).dialog( "open" );	
+		});
+		$("#editPlotParameters").click(function () {//点击编辑绘图参数按钮，从服务器请求绘图参数。
+			$( "#dialog-editPlotParameters" ).dialog( "open" );//这个是有先后顺序的，这个的先后顺序会影响到accordion的正常显示，个人理解是因为没有open所以refresh无效状态没变	
+			InitialEditPlotParameters();
+		});
+		$("#editLithology").click(function () {//点击编辑岩性按钮，使importLithologys触发点击事件，然后完成读取岩性文件的操作。
+			$( "#dialog-form" ).dialog( "open" );
+			lithologyInter2Accordion(lithologyInterpretation);
+		});
+		$("#dataManageInServer").click(function () {//点击个人数据管理按钮，导入后台数据库中的数据。
+			$( "#dialog-dataManageInServer" ).dialog( "open" );
+			DLWellNamesFromServer();
+			
+		});
+		$("#coopDataManageInServer").click(function () {//点击协作数据管理按钮，导入后台数据库中的数据。
+			$( "#dialog-coopDataManageInServer" ).dialog( "open" );
+			DLCoopWellsFromServer();
+		});
+		$("#addCooperator").click(function () {//点击管理协作者，导入数据库中的协作者信息。
+			var dataBaseName = GetCurrentWellInfo().dataBaseName;
+			if(dataBaseName=="当前用户")
+			{
+				$( "#dialog-ManageCooperator" ).dialog( "open" );
+				DLCooperatorsFromServer(GetCurrentWellInfo().wellName);
+			}else{ alert('您没有权限，请联系数据拥有者添加协作者，或保存数据到个人数据库。')}
+		});
+
+		//获取当前井的详细信息
+		function GetCurrentWellInfo(){
+			var result ={};
+			result["dataBaseName"] = document.getElementById("dataBaseName").innerText.substr(6);
+			result["wellName"] = document.getElementById("wellName").innerText.substr(3);
+			return result;
+		}
+
+		//设置当前井的详细信息
+		function SetCurrentWellInfo(dataBaseName='',wellName='')
+		{
+		
+			document.getElementById("dataBaseName").innerText = "数据库名称:" + dataBaseName;
+			document.getElementById("wellName").innerText = "井名:" + wellName;
+		}
+			
+		//读取测井曲线文件
+		function GetFileName() {
+			ClearAllData();//清空所有数据，回到最初状态
+			SetCurrentWellInfo();
+			var selectedFile = document.getElementById("files").files[0];//获取读取的File对象			
+			var reader = new FileReader();//这里是核心！！！读取操作就是由它完成的。
+			reader.readAsText(selectedFile);//读取文件的内容
+			reader.onload = function () {
+				//console.log(this.result);//当读取完成之后会回调这个函数，然后此时文件的内容存储到了result中。直接操作即可。
+				var data = this.result;
+				// 分隔每一行
+				var rawPara = [];
+				var rawData = [];
+				var identification=[];
+				var unit =[];
+				var lines = data.split('\r\n');
+
+				// 遍历每一行
+				$.each(lines, function (lineNo, line) {
+					var items = line.split(',');
+					// 处理第一行，即参数名称
+					if (lineNo == 0) {
+						$.each(items, function (itemNo, item) {
+							rawPara.push(item);
+							rawData.push([]);
+						});
+					}
+					else if(lineNo == 1){//第二行为测井参数标识符
+						$.each(items, function (itemNo, item) {identification.push(parseInt(item));});
+					}
+					else if(lineNo ==2){//第三行为测井参数单位
+						$.each(items, function (itemNo, item) {unit.push(item);});
+					}
+					// 处理其他的每一行,为了解决可能存在的NAN问题，这里逐一进行对比。
+					else {
+						if(items.length==rawData.length)//数据维度要匹配
+						{
+							$.each(items, function (itemNo, item) {
+							var temp = parseFloat(item);//数据，记得转换成数值类型
+							rawData[itemNo].push(temp);					
+							});
+						}					
+					}
+				});
+
+				// 整理数据生成loggingData,最后为深度数据方便后面进行相关处理
+				var rawLoggingData ={}
+				for (var i = 0; i < rawPara.length; i++) {
+					rawLoggingData[rawPara[i]] = {};
+					rawLoggingData[rawPara[i]].rawData = rawData[i];
+					rawLoggingData[rawPara[i]].identification = identification[i];
+					rawLoggingData[rawPara[i]].unit = unit[i];
+					rawLoggingData[rawPara[i]].minValue = Math.min.apply(null, rawData[i]);
+					rawLoggingData[rawPara[i]].maxValue = Math.max.apply(null, rawData[i]);
+				}
+				RawLoggignData2LoggingDataFormat(rawLoggingData);
+				InitPlot();
+			};
+		}
+
+		//将用于绘图的当前格式化测井数据转换为原始数据格式用于数据上传
+		function LoggingDataFormat2RawLoggignData() {
+			var loggingDataJson = loggingData
+			for (var para in loggingData) {
+				var data = []
+				for (var i in loggingData[para].rawData) {
+					data.push(loggingData[para].rawData[i][1])
+				}
+				loggingDataJson[para].rawData = data
+			}
+			return loggingDataJson
+		}
+		
+		//将原始数据转换为绘图所需的数据格式同样可用于服务器数据转换
+		function RawLoggignData2LoggingDataFormat(rawLoggingData){
+			loggingData={};
+			//寻找深度列
+			var depthName=''
+			for(var traceData in rawLoggingData){if(rawLoggingData[traceData].identification ==0){depthName = traceData}}
+			for(var traceData in rawLoggingData){
+				loggingData[traceData]={}
+				loggingData[traceData].identification = rawLoggingData[traceData].identification;
+				loggingData[traceData].unit = rawLoggingData[traceData].unit;
+				loggingData[traceData].minValue = rawLoggingData[traceData].minValue;
+				loggingData[traceData].maxValue = rawLoggingData[traceData].maxValue;
+				loggingData[traceData].rawData =[]
+				if(traceData==depthName){
+					for(var i = 0; i<rawLoggingData[traceData].rawData.length;i++)
+					{
+						loggingData[traceData].rawData.push([rawLoggingData[traceData].rawData[i],rawLoggingData[traceData].rawData[i]])
+					}
+				}
+				else{
+					for(var i = 0; i<rawLoggingData[traceData].rawData.length;i++)
+					{
+						loggingData[traceData].rawData.push([rawLoggingData[depthName].rawData[i],rawLoggingData[traceData].rawData[i]])					
+					}		
+				}
+			}
+			//根据深度判断是否需要进行数据翻转，以确保深度数据升序排列
+			if(rawLoggingData[depthName].rawData[1]<rawLoggingData[depthName].rawData[0]){
+				for(var traceData in loggingData){
+					loggingData[traceData].rawData.reverse();
+				}
+			}
+		}
+		var InitPlot= function () {//初始化绘图参数
+			var depthName = '';//获取深度信息
+			for(var tracePara in loggingData){if(loggingData[tracePara].identification ==0){depthName = tracePara}}
+			//计算绘图的深度范围	//计算显示的深度范围10的整数倍开始，10的整数倍结束，同时计算参数的显示范围
+			var depthStart = loggingData[depthName].minValue;
+			var depthEnd = loggingData[depthName].maxValue;
+			depthStart = Math.floor(depthStart / 10) * 10;
+			depthEnd = Math.ceil(depthEnd / 10) * 10;
+			//初始化绘图参数
+			for(var tracePara in loggingData){
+				var temp = Object.create(null);//初始化plotParameters绘图参数
+				temp.paraName = tracePara;
+				temp.depthStart = depthStart;
+				temp.depthEnd = depthEnd;
+				temp.tickInterval = 10;
+				temp.minValue = loggingData[tracePara].minValue;
+				temp.maxValue = loggingData[tracePara].maxValue
+				temp.depthScale = 100;
+				if(tracePara==depthName){
+					temp.plotStyle = "Depth";
+					temp.width = 80;
+				}
+				else{temp.plotStyle="Line";temp.width = 300;}
+				plotParameters.push(temp);
+			}
+			RefreshPlot()								
+		}
+		//进行像素px的数值，用于后面的逻辑处理
+		function GetPxData(PxValue){
+			var patternValue = /(\d+(\.\d+)?)/;
+			return parseFloat(PxValue.match(patternValue)[0]);
+		}
+		//清除Canvas绘图区域，这个一定要在参数赋值前进行
+		function ClearAllData(){
+			for(var i=0;i<plotParameters.length;i++){$("#"+plotParameters[i].paraName).remove();}
+			for(var i=0;i<lithologyInterpretation.length;i++){$("#"+"Lithology"+i).remove();}
+			plotParameters=[];
+			loggingData={};
+			lithologyInterpretation =[];
+
+		}
+
+		//计算绘图Canvas的尺寸
+		var GetPlotCanvas = function () {		
+			var depthStart = plotParameters[0].depthStart;//目前统一尺寸，后面根据实际需求进行调整
+			var depthEnd = plotParameters[0].depthEnd;
+			var depthScale = plotParameters[0].depthScale;
+			var lengthMM = (depthEnd - depthStart) * 1000 / depthScale;//比例尺1:100单位毫米
+			//根据loggingData删除canvas,这里解决本井的问题即可
+			for(var paraName in loggingData){$("#"+paraName).remove();}
+			//创建div确定绘图区域以及绘图参数
+			for (var i = 0; i < plotParameters.length; i++) {
+				var paraName = plotParameters[i].paraName;
+				var div = document.createElement("div");
+				div.id = paraName;
+				div.style.width = plotParameters[i].width+"px";
+				//计算marginLeft
+				if(i==0){div.style.marginLeft="60px"}
+				else{
+					var divTemp = document.getElementById(plotParameters[i-1].paraName);
+					div.style.marginLeft=GetPxData(divTemp.style.marginLeft)+plotParameters[i-1].width+"px";
+				}
+				div.style.position = "absolute";
+				div.style.height = lengthMM + "mm";
+				div.style.marginTop ="60px" ;
+				document.body.appendChild(div);
+			}
+			
+		}
+
+
+		function GetLithologyCanvas(){
+			var depthStart = plotParameters[0].depthStart;//目前统一尺寸，后面根据实际需求进行调整
+			var depthEnd = plotParameters[0].depthEnd;
+			var depthScale = plotParameters[0].depthScale;
+			var lengthMM = (depthEnd - depthStart) * 1000 / depthScale;//比例尺1:100单位毫米
+			//创建岩性柱状图的绘图区域,canvas不能使用mm单位，这里需要手动计算DPI。
+			var tmpNode = document.createElement("div");
+			tmpNode.style.cssText = "width:1in;height:1in;position:absolute;left:0px;top:0px;z-index:99;visibility:hidden";
+			document.body.appendChild(tmpNode);
+			var Y_DPI = parseInt(tmpNode.offsetHeight);
+			tmpNode.parentNode.removeChild(tmpNode);
+			//计算岩性柱状图的canvas,定义总像素长度		
+			var lengthPX = lengthMM * Y_DPI / 25.4 - 73;//这里不能使用mm单位，只能使用像素
+			for(var i=0;i<lithologyInterpretation.length;i++){
+				$("#"+"Lithology"+i).remove();
+				var canvaLith = document.createElement("canvas");
+				canvaLith.id = "Lithology"+i;
+				canvaLith.width = 56;
+				var distance = lithologyInterpretation[i].endDepth-lithologyInterpretation[i].startDepth;
+				canvaLith.height = distance/(depthEnd-depthStart) *lengthPX;     //这里不能使用mm单位，只能使用像素
+				canvaLith.style = "border: 1px solid #aaaaaa; position: absolute";			
+				var distance = lithologyInterpretation[i].startDepth-depthStart;
+				canvaLith.style.marginTop = (distance/(depthEnd-depthStart)*lengthPX+117)+"px"				
+				document.body.appendChild(canvaLith);
+			}	
+
+		}
+
+
+
+
+		var loggingData = {}; //创建数据对象
+		var plotParameters = [];//创建绘图对象,绘图有顺序所以这里是列表类型。
+		
+		
+		var PlotLoggingLines_invert = function () {
+			for (var i = 0; i < plotParameters.length; i++) {
+				var options = {
+					chart: {
+						type: 'line',
+						inverted: true
+					},
+					navigation: {
+						buttonOptions: {
+							enabled: false
+						}
+					},
+					credits: {
+						enabled: false // 禁用版权信息
+					},
+					title: null,
+					legend: { enabled: false, },
+
+					yAxis: {
+						title: { text: plotParameters[i].paraName + '(' + loggingData[plotParameters[i].paraName].unit + ')' },
+						opposite: true,
+						min: plotParameters[i].minValue,
+						max: plotParameters[i].maxValue,
+						lineWidth: 1,
+					},
+
+					xAxis: [{
+						title: null,
+						reversed: true,
+						lineWidth: 1,
+						labels: { enabled: false },
+						min: plotParameters[i].depthStart,
+						max: plotParameters[i].depthEnd,
+						tickPosition: 'inside',
+						tickInterval: 10,
+						minorTickInterval: 5,
+					}],
+					
+					plotOptions: { series: { marker: { enabled: false } } },//取消标记点
+					series: [{ name: plotParameters[i].paraName, data: null, }],
+				};
+				switch (plotParameters[i].plotStyle) {
+					case "Depth":
+						options.yAxis.labels = {
+							formatter: function () {
+								return '1:'+ plotParameters[i].depthScale;
+							},
+							x: -35,
+						}
+						options.xAxis[0].labels = {
+							align: 'center',
+							y: 3,
+							x: 40
+						}
+						options.yAxis.min = 0;
+						options.yAxis.max = 0;
+						break;
+
+					case "Log"://Log中需要执行部分Line的代码
+						options.yAxis.type = 'logarithmic';
+					case "Line":
+						options.xAxis[0].lineWidth = 1;
+						options.xAxis.push({ labels: { enabled: false }, title: null, lineWidth: 1, opposite: true });
+						options.series[0].data = loggingData[plotParameters[i].paraName].rawData;
+						break;
+				}
+				Highcharts.chart(plotParameters[i].paraName, options);
+
+			}
+		}
+
+		var PlotLithology = function () {
+			for(var layer =0;layer<lithologyInterpretation.length;layer++){
+				let canvas = document.getElementById("Lithology"+layer);
+				let context = canvas.getContext("2d");
+				let img = new Image();
+				img.src = "../Assets/Images/"+lithologyInterpretation[layer].name+".png";
+				img.onload = function () {
+					let pattern = context.createPattern(img, "repeat");
+					context.fillStyle = pattern;
+					context.fillRect(0, 0, canvas.width, canvas.height);
+				}
+			}
+			
+		}
+	</script>
+</body>
+
+</html>
